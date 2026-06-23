@@ -13,6 +13,7 @@ import os
 import sys
 import platform
 import shutil
+from tkinter import messagebox
 
 CURRENT_OS = platform.system()
 IS_WINDOWS = CURRENT_OS == "Windows"
@@ -1329,6 +1330,13 @@ class HardwareApp(ctk.CTk):
         )
         self.refresh_button.grid(row=0, column=0, sticky="ew")
 
+        self.export_button = ctk.CTkButton(
+            self.refresh_frame,
+            text="Metin Belgesi Oluştur",
+            command=self.export_hardware_report
+        )
+        self.export_button.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+
         self.spinner_label = ctk.CTkLabel(
             self.refresh_frame,
             text="",
@@ -1951,6 +1959,114 @@ class HardwareApp(ctk.CTk):
             "bluetooth_peripherals": bluetooth_items,
             "alerts": dedupe_items(alerts),
         }
+
+    def get_desktop_folder(self):
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+
+        if os.path.isdir(desktop):
+            return desktop
+
+        return self.get_app_folder()
+
+    def format_hardware_report(self, data):
+        report_sections = [
+            ("Bilgisayar / BIOS", data.get("system", [])),
+            ("Laptop", data.get("laptop", [])),
+            ("İşlemci", data.get("cpu", [])),
+            ("Anakart", data.get("motherboard", [])),
+            ("Ekran Kartı", data.get("gpu", [])),
+            ("RAM", data.get("ram", [])),
+            ("Depolama / SSD", data.get("ssd", [])),
+            ("Depolama / HDD", data.get("hdd", [])),
+            ("Depolama / Türü Belirsiz", data.get("unknown_storage", [])),
+            ("Çevre Birimleri / Kablolu ve Dahili", data.get("wired_peripherals", [])),
+            ("Çevre Birimleri / Bluetooth", data.get("bluetooth_peripherals", [])),
+        ]
+
+        battery_items = data.get("battery", [])
+        if battery_items and "Batarya bilgisi bulunamadı" not in battery_items[0]:
+            report_sections.append(("Güç / Batarya", battery_items))
+        else:
+            report_sections.append(("Güç / PSU ve Sensörler", data.get("power_sensors", [])))
+
+        report_sections.append(("Eksik Bilgi Uyarıları", data.get("alerts", [])))
+
+        lines = []
+        lines.append("DONANIM BİLGİ RAPORU")
+        lines.append("=" * 60)
+        lines.append(f"Oluşturulma tarihi: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
+        lines.append("")
+
+        for title, items in report_sections:
+            if not items:
+                continue
+
+            lines.append(title)
+            lines.append("-" * len(title))
+
+            for item in items:
+                lines.append(f"- {item}")
+
+            lines.append("")
+
+        return "\n".join(lines).strip() + "\n"
+
+    def export_hardware_report(self):
+        self.export_button.configure(
+            text="Metin belgesi hazırlanıyor...",
+            state="disabled"
+        )
+        self.status_label.configure(text="Metin belgesi hazırlanıyor...")
+
+        thread = threading.Thread(
+            target=self.export_hardware_report_background,
+            daemon=True
+        )
+        thread.start()
+
+    def export_hardware_report_background(self):
+        if pythoncom is not None:
+            pythoncom.CoInitialize()
+
+        try:
+            data = self.collect_all_data()
+            report_text = self.format_hardware_report(data)
+            file_name = "donanim_bilgi_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".txt"
+            file_path = os.path.join(self.get_desktop_folder(), file_name)
+
+            with open(file_path, "w", encoding="utf-8") as report_file:
+                report_file.write(report_text)
+
+            self.after(0, lambda file_path=file_path: self.export_hardware_report_finished(file_path))
+
+        except Exception as error:
+            error_message = str(error)
+            self.after(0, lambda error_message=error_message: self.export_hardware_report_failed(error_message))
+        finally:
+            if pythoncom is not None:
+                pythoncom.CoUninitialize()
+
+    def export_hardware_report_finished(self, file_path):
+        self.export_button.configure(
+            text="Metin Belgesi Oluştur",
+            state="normal"
+        )
+        self.status_label.configure(text="Metin belgesi oluşturuldu")
+        messagebox.showinfo(
+            "Metin Belgesi Oluşturuldu",
+            "Donanım bilgileri metin belgesine kaydedildi:\n\n" + file_path
+        )
+
+    def export_hardware_report_failed(self, message):
+        self.export_button.configure(
+            text="Metin Belgesi Oluştur",
+            state="normal"
+        )
+        self.status_label.configure(text="Metin belgesi oluşturulamadı")
+        messagebox.showerror(
+            "Hata",
+            "Metin belgesi oluşturulurken hata oluştu:\n\n" + message
+        )
 
     def update_ui_with_data(self, data):
         self.clear_content()
